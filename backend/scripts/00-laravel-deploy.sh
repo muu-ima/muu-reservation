@@ -16,7 +16,6 @@ echo "[prestart] migrate..."
 php artisan migrate --force
 
 echo "[prestart] render nginx templates with \$PORT..."
-# nginx が実際に読む可能性のある両方を生成（どちらでもOKにする）
 pairs=(
   "/etc/nginx/sites-enabled/default.conf.template:/etc/nginx/sites-enabled/default.conf"
   "/etc/nginx/conf.d/default.conf.template:/etc/nginx/conf.d/default.conf"
@@ -37,3 +36,5 @@ nginx -t
 
 echo "[prestart] done. handoff to image /start.sh"
 exit 0
+BASH
+chmod +x backend/scripts/00-laravel-deploy.sh
