@@ -1,20 +1,39 @@
 #!/usr/bin/env bash
 set -euo pipefail
+trap 'code=$?; echo "[prestart][ERROR] failed at line $LINENO (exit $code)"; exit $code' ERR
 
-echo "Running composer"
+# Laravel ルート（monorepo: backend）
+cd /var/www/html/backend
+
+echo "[prestart] composer install..."
+if ! command -v composer >/dev/null 2>&1; then
+  echo "[prestart][ERROR] composer not found in image"
+  exit 1
+fi
 composer install --no-dev --prefer-dist --no-interaction --no-progress --optimize-autoloader
 
-# ★ 権限問題を避けるため、当面はキャッシュ生成しない
-# php artisan config:cache
-# php artisan route:cache
+echo "[prestart] migrate..."
+php artisan migrate --force
 
-echo "Running migrations at runtime..."
- php artisan migrate --force
+echo "[prestart] render nginx templates with \$PORT..."
+# nginx が実際に読む可能性のある両方を生成（どちらでもOKにする）
+pairs=(
+  "/etc/nginx/sites-enabled/default.conf.template:/etc/nginx/sites-enabled/default.conf"
+  "/etc/nginx/conf.d/default.conf.template:/etc/nginx/conf.d/default.conf"
+)
+for pair in "${pairs[@]}"; do
+  IFS=: read -r tpl out <<<"$pair"
+  if [ -f "$tpl" ]; then
+    if command -v envsubst >/dev/null 2>&1; then
+      envsubst '$PORT' < "$tpl" > "$out"
+    else
+      sed "s/\${PORT}/${PORT}/g" "$tpl" > "$out"
+    fi
+  fi
+done
 
- # nginx用に ${PORT} を流し込む（テンプレにしている場合）
- if [ -f /etc/nginx/conf.d/default.conf.template ]; then
-   envsubst '$PORT' < /etc/nginx/conf.d/default.conf.template > /etc/nginx/conf.d/default.conf
- fi
+echo "[prestart] nginx -t..."
+nginx -t
 
- echo "[prestart] done. Handing off to image /start.sh"
- exit 0
+echo "[prestart] done. handoff to image /start.sh"
+exit 0
