@@ -9,7 +9,12 @@ composer install --no-dev --prefer-dist --no-interaction --no-progress --optimiz
 # php artisan route:cache
 
 echo "Running migrations at runtime..."
-php artisan migrate --force
+ php artisan migrate --force
 
-# ここから本番プロセスを起動（例: php-fpm）
-exec php-fpm
+ # nginx用に ${PORT} を流し込む（テンプレにしている場合）
+ if [ -f /etc/nginx/conf.d/default.conf.template ]; then
+   envsubst '$PORT' < /etc/nginx/conf.d/default.conf.template > /etc/nginx/conf.d/default.conf
+ fi
+
+ echo "[prestart] done. Handing off to image /start.sh"
+ exit 0
