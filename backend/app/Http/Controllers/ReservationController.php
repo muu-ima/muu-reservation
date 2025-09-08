@@ -37,54 +37,97 @@ class ReservationController extends Controller
     /**
      * POST /api/reservations
      */
-    public function store(Request $request)
-    {
-        $data = $request->validate([
-            'date'    => ['required','date'],
-            'program' => ['required', Rule::in(['tour','experience'])],
-            'slot'    => ['required', Rule::in(['am','pm','full'])],
-            'status'  => ['nullable', Rule::in(['booked','done','cancelled'])],
-            'room'    => ['nullable','string','max:16'],
+  // 先頭付近の use に追加
+use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
+use Illuminate\Database\QueryException;
+use Illuminate\Support\Str;
+use Illuminate\Http\Response;
 
-            // 氏名系（任意）
-            'name'       => ['nullable','string','max:191'],
-            'last_name'  => ['nullable','string','max:191'],
-            'first_name' => ['nullable','string','max:191'],
+// 本文
+public function store(Request $request)
+{
+    // 0) 入力を軽く正規化（trim／電話は全角→半角）
+    $in = $request->all();
+    foreach (['name','last_name','first_name','email','phone','contact','notebook_type','note','room'] as $k) {
+        if (isset($in[$k]) && is_string($in[$k])) $in[$k] = trim($in[$k]);
+    }
+    if (!empty($in['phone'])) $in['phone'] = mb_convert_kana($in['phone'], 'as');
+    $request->replace($in);
 
-            // 連絡先
-            'email' => ['nullable','email','max:191'],
-            'phone' => ['nullable','string','max:32'],
+    // 1) 厳格バリデーション（失敗は 422）
+    $data = $request->validate([
+        'date'    => ['required','date_format:Y-m-d'],            // ← YYYY-MM-DD を強制
+        'program' => ['required', Rule::in(['tour','experience'])],
+        'slot'    => ['required', Rule::in(['am','pm','full'])],
+        'status'  => ['nullable', Rule::in(['booked','done','cancelled'])],
+        'room'    => ['nullable','string','max:16'],
 
-            // 任意メタ
-            'contact'        => ['nullable','string','max:191'],
-            'notebook_type'  => ['nullable','string','max:32'],
-            'has_certificate'=> ['nullable','boolean'],
-            'note'           => ['nullable','string','max:2000'],
-        ]);
+        // 氏名系（任意）
+        'name'       => ['nullable','string','max:191'],
+        'last_name'  => ['nullable','string','max:191'],
+        'first_name' => ['nullable','string','max:191'],
 
-        // tour は full を禁止
-        if (($data['program'] ?? null) === 'tour' && ($data['slot'] ?? null) === 'full') {
-            return response()->json(['message' => 'tour は full を選べません'], Response::HTTP_UNPROCESSABLE_ENTITY, [], $this->jsonFlags);
-        }
+        // 連絡先
+        'email' => ['nullable','email','max:191'],
+        'phone' => ['nullable','string','max:50','regex:/^[0-9()+\s-]{8,}$/u'],
 
-        // 既定値
-        $data['status'] = $data['status'] ?? 'booked';
-        $data['has_certificate'] = (bool)($data['has_certificate'] ?? false);
+        // 任意メタ
+        'contact'        => ['nullable','string','max:191'],
+        'notebook_type'  => ['nullable','string','max:32'],
+        'has_certificate'=> ['nullable','boolean'],
+        'note'           => ['nullable','string','max:2000'],
+    ], [
+        'date.date_format' => 'date は YYYY-MM-DD 形式で送ってください。',
+        'phone.regex'      => '電話番号は数字、+、( )、-、スペースのみ／8文字以上にしてください。',
+    ]);
 
-        // 氏名フォールバック（name が無ければ 姓+名 / それも無ければ 'ゲスト'）
-        $data['name'] = $this->buildFallbackName($data);
+    // 2) 組合せルール（tour は full を禁止）
+    if (($data['program'] ?? null) === 'tour' && ($data['slot'] ?? null) === 'full') {
+        return response()->json(
+            ['message' => 'tour は full を選べません'],
+            Response::HTTP_UNPROCESSABLE_ENTITY,
+            [],
+            $this->jsonFlags
+        );
+    }
 
-        // JST日付+slot → UTCの start/end を自動算出
-        [$startAt, $endAt] = $this->calcWindow($data['date'], $data['slot']);
-        $data['start_at'] = $startAt;
-        $data['end_at']   = $endAt;
+    // 3) 既定値 & name フォールバック
+    $data['status'] = $data['status'] ?? 'booked';
+    $data['has_certificate'] = (bool)($data['has_certificate'] ?? false);
+    $data['name'] = $this->buildFallbackName($data);
 
-        // ★ 同一 program 限定の時間帯重複を禁止（cancelled は無視）
+    // 4) JST日付+slot → UTCの start/end を自動算出
+    [$startAt, $endAt] = $this->calcWindow($data['date'], $data['slot']);
+    $data['start_at'] = $startAt;
+    $data['end_at']   = $endAt;
+
+    // 5) 保存（重複やDB例外は握って 409/400/500 に振り分け）
+    try {
+        // 同一 program 限定の時間帯重複を禁止（cancelled は無視）
         $this->assertNoProgramOverlap($data);
 
         $created = Reservation::create($data);
         return response()->json($created, 201, [], $this->jsonFlags);
+
+    } catch (ValidationException $e) {
+        // assertNoProgramOverlap が ValidationException を投げる場合はそのまま 422
+        throw $e;
+
+    } catch (QueryException $e) {
+        \Log::error('reservations.store QueryException', ['msg' => $e->getMessage()]);
+        $m = $e->getMessage();
+        if (Str::contains($m, ['reservations_no_overlap','no_overlap','unique'])) {
+            return response()->json(['message' => '同一時間帯の重複予約はできません。'], 409, [], $this->jsonFlags);
+        }
+        return response()->json(['message' => '不正なデータです。'], 400, [], $this->jsonFlags);
+
+    } catch (\Throwable $e) {
+        \Log::error('reservations.store Throwable', ['msg' => $e->getMessage()]);
+        return response()->json(['message' => 'サーバーエラーが発生しました。'], 500, [], $this->jsonFlags);
     }
+}
+
 
     /**
      * PATCH /api/reservations/{reservation}

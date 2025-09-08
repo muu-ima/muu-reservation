@@ -178,7 +178,8 @@ export default function CreateReservationModal({
                             onChange={(e) => setDraft((d) => ({ ...d, phone: e.target.value }))}
                             inputMode="tel"
                             autoComplete="tel"
-                            pattern="[0-9()+\- ]{8,}"
+                            pattern="[0-9()+\s-]{8,}"          // ← ここだけ変更
+                            title="数字、+、( )、-、スペースのみ／8文字以上"
                         />
                     </label>
 

@@ -7,10 +7,9 @@ import ReservationTable, {
     Program,
     Slot,
 } from "../components/ReservationTable";
-
 const API_BASE =
-  process.env.NEXT_PUBLIC_API_BASE ?? "https://muu-reservation.onrender.com/api";
-  const ADMIN_PIN = process.env.NEXT_PUBLIC_ADMIN_PIN ?? ""; // 開発用の簡易PIN
+    process.env.NEXT_PUBLIC_API_BASE ?? "https://muu-reservation.onrender.com/api";
+const ADMIN_PIN = process.env.NEXT_PUBLIC_ADMIN_PIN ?? ""; // 開発用の簡易PIN
 
 type Filters = {
     dateFrom: string;
